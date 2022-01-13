@@ -124,18 +124,76 @@ function loadMessages() {
 // Saves a new message containing an image in Firebase.
 // This first saves the image in Firebase storage.
 async function saveImageMessage(file) {
-    // TODO 9: Posts a new image as a message.
+    try {
+        // 1 - We add a message with a loading icon that will get updated with the shared image.
+        const messageRef = await addDoc(collection(getFirestore(), 'messages'), {
+            name: getUserName(),
+            imageUrl: LOADING_IMAGE_URL,
+            profilePicUrl: getProfilePicUrl(),
+            timestamp: serverTimestamp()
+        });
+
+        // 2 - Upload the image to Cloud Storage.
+        const filePath = `${getAuth().currentUser.uid}/${messageRef.id}/${file.name}`;
+        const newImageRef = ref(getStorage(), filePath);
+        const fileSnapshot = await uploadBytesResumable(newImageRef, file);
+
+        // 3 - Generate a public URL for the file.
+        const publicImageUrl = await getDownloadURL(newImageRef);
+
+        // 4 - Update the chat message placeholder with the image's URL.
+        await updateDoc(messageRef,{
+            imageUrl: publicImageUrl,
+            storageUri: fileSnapshot.metadata.fullPath
+        });
+    } catch (error) {
+        console.error('There was an error uploading a file to Cloud Storage:', error);
+    }
 }
+
 
 // Saves the messaging device token to Cloud Firestore.
 async function saveMessagingDeviceToken() {
-    // TODO 10: Save the device token in Cloud Firestore
+    try {
+        const currentToken = await getToken(getMessaging());
+        if (currentToken) {
+            console.log('Got FCM device token:', currentToken);
+            // Saving the Device Token to Cloud Firestore.
+            const tokenRef = doc(getFirestore(), 'fcmTokens', currentToken);
+            await setDoc(tokenRef, { uid: getAuth().currentUser.uid });
+
+            // This will fire when a message is received while the app is in the foreground.
+            // When the app is in the background, firebase-messaging-sw.js will receive the message instead.
+            onMessage(getMessaging(), (message) => {
+                console.log(
+                    'New foreground notification from Firebase Messaging!',
+                    message.notification
+                );
+            });
+        } else {
+            // Need to request permissions to show notifications.
+            requestNotificationsPermissions();
+        }
+    } catch(error) {
+        console.error('Unable to get messaging token.', error);
+    };
 }
+
 
 // Requests permissions to show notifications.
 async function requestNotificationsPermissions() {
-    // TODO 11: Request permissions to send notifications.
+    console.log('Requesting notifications permission...');
+    const permission = await Notification.requestPermission();
+
+    if (permission === 'granted') {
+        console.log('Notification permission granted.');
+        // Notification permission granted.
+        await saveMessagingDeviceToken();
+    } else {
+        console.log('Unable to get permission to notify.');
+    }
 }
+
 
 // Triggered when a file is selected via the media picker.
 function onMediaFileSelected(event) {
@@ -379,6 +437,7 @@ const firebaseAppConfig = getFirebaseConfig();
 // TODO 0: Initialize Firebase
 initializeApp(firebaseAppConfig);
 // TODO 12: Initialize Firebase Performance Monitoring
+getPerformance();
 
 initFirebaseAuth();
 loadMessages();
